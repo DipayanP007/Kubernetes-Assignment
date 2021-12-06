@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elastic-search-master
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: elastic-search
+  serviceName: elastic-search-headless
+  template:
+    metadata:
+      name: elastic-search
+      labels:
+        app: elastic-search
+    spec:
+      initContainers:
+        - name: alpine-init
+          image: alpine
+          imagePullPolicy: IfNotPresent
+          command: ["sysctl", "-w", "vm.max_map_count=262144"]
+          securityContext:
+            privileged: true
+        
+      containers:
+        - image: quay.io/prometheuscommunity/elasticsearch-exporter:latest
+          name: elastic-search-exporter
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--es.uri=http://localhost:9200"
+          ports:
+            - name: metrics
+              containerPort: 9114
+        - name: elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:7.9.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: communication
+              containerPort: 9200
+            - name: transport
+              containerPort: 9300
+          env: 
+            - name: node.name
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: cluster.name
+              value: "Elastic"
+            - name: discovery.seed_hosts
+              value: elastic-search-headless 
+            - name: cluster.initial_master_nodes
+              value: elastic-search-master-0,elastic-search-master-1 
+            - name: ES_JAVA_OPTS
+              value: "-Xms512m -Xmx512m"
+            
+            - name: ES_SETTING_NETWORK_HOST
+              value: "0.0.0.0"
+            - name: ES_SETTING_NETWORK_PUBLISH__HOST
+              value: $(ES_SETTING_NODE_NAME).elastic-search-headless
+            - name: node.roles
+              value: data,master
+          volumeMounts:
+            - name: elastic-search-data
+              mountPath: /usr/share/elasticsearch/data
+  volumeClaimTemplates:
+    - metadata:
+          name: elastic-search-data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 300Mi
+        storageClassName: fast
